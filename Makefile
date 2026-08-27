@@ -1,7 +1,7 @@
 .PHONY: run uav-sitl rm-uav-sitl
 
 run: uav-sitl
-	docker run -it --rm -p 5762:5762 uav-sitl
+	docker run -it --rm -p 127.0.0.1:5762:5762 uav-sitl
 
 uav-sitl:
 	docker build -t uav-sitl sitl
