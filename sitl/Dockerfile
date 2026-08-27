@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* # we don't need index
 
 RUN pip3 install --break-system-packages \
-    MAVProxy pexpect pymavlink
+    MAVProxy pexpect pymavlink future
 
 COPY --from=builder /ardupilot /ardupilot
 
@@ -44,7 +44,8 @@ ENV SITL_FRAME=quad \
     SITL_HOME=-35.363261,149.165230,584,353
     # CMAC https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.0/Tools/autotest/locations.txt#L4
 
-# 5760, 5762, 5763
+# simulator exposes to 5760, 5762, 5763
+# 5760 is taken immediately by simulator CLI, use next one
 EXPOSE 5762/tcp
 
 COPY entrypoint.sh /entrypoint.sh
