@@ -7,3 +7,10 @@ requires-python = ">=3.13"
 dependencies = [
     "pymavlink>=2.4.49",
 ]
+
+[tool.mypy]
+stubPath = "typings"
+
+[[tool.mypy.overrides]]
+module = ["pymavlink", "pymavlink.*"]
+ignore_missing_imports = true
