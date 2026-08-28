@@ -1,5 +1,0 @@
-/*
-!/.gitignore
-!/pymavlink
-/pymavlink/*
-!/pymavlink/mavutil.pyi
