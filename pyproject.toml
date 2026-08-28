@@ -8,7 +8,9 @@ dependencies = [
     "pymavlink>=2.4.49",
 ]
 
-[tool.mypy]
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
 stubPath = "typings"
 
 [[tool.mypy.overrides]]

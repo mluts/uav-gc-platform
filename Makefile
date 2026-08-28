@@ -1,12 +1,12 @@
-.PHONY: run uav-sitl rm-uav-sitl
+.PHONY: run uav-sitl rm-uav-sitl check stubs
 
 run: uav-sitl
 	docker run -it --rm -p 127.0.0.1:5762:5762 uav-sitl
 
-check-sitl:
+check:
 	./.venv/bin/python3 ./scripts/check_sitl.py
 
-py-stubs:
+stubs:
 	pyright --createstub pymavlink
 
 uav-sitl:
