@@ -37,7 +37,6 @@ class MavLink:
         retries=3,
         deadline_max=60,
     ):
-        # self.conn = mavutil.mavlink_connection(dev, baud=baud)
         self.dev = dev
         self.baud = baud
         self.ack_timeout = ack_timeout

@@ -41,6 +41,32 @@ def snapshot(vehicle: Vehicle, link: MavLink) -> dict:
     }
 
 
+async def do_arm(vehicle: Vehicle) -> dict:
+    try:
+        await vehicle.arm()
+
+        return {"armed": vehicle.armed}
+    except Exception as e:
+        return {"armed": vehicle.armed, "error": str(e)}
+
+
+async def do_disarm(vehicle: Vehicle) -> dict:
+    try:
+        await vehicle.disarm()
+
+        return {"armed": vehicle.armed}
+    except Exception as e:
+        return {"armed": vehicle.armed, "error": str(e)}
+
+
+async def do_set_mode(vehicle: Vehicle, mode) -> dict:
+    try:
+        await vehicle.set_mode(mode)
+        return {"mode": vehicle.mav_mode}
+    except Exception as e:
+        return {"mode": vehicle.mav_mode, "error": str(e)}
+
+
 class Api:
     def __init__(self, vehicle: Vehicle, link: MavLink):
         self.vehicle = vehicle
@@ -49,9 +75,21 @@ class Api:
     async def stats(self, _req: web.Request) -> web.Response:
         return web.json_response(snapshot(self.vehicle, self.link))
 
+    async def arm(self, _req: web.Request) -> web.Response:
+        return web.json_response(await do_arm(self.vehicle))
+
+    async def disarm(self, _req: web.Request) -> web.Response:
+        return web.json_response(await do_disarm(self.vehicle))
+
+    async def set_mode(self, req: web.Request) -> web.Response:
+        return web.json_response(await do_set_mode(self.vehicle, req.query["newmode"]))
+
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_get("/stats", self.stats)
+        app.router.add_post("/arm", self.arm)
+        app.router.add_post("/disarm", self.disarm)
+        app.router.add_post("/mode", self.set_mode)
         return app
 
     async def serve(self, host="127.0.0.1", port=8080):
