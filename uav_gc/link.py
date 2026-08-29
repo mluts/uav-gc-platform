@@ -51,7 +51,9 @@ class MavLink:
         self.last_heartbeat_at: float | None = None
         self._hb_seen = asyncio.Event()
 
-        self._listeners: list[tuple[Callable, asyncio.Future]] = []
+        self._once: list[tuple[Callable, asyncio.Future]] = []
+        self._handlers: dict[int, list[Callable]] = {}
+        self._started_at = None
 
     @classmethod
     def from_args(cls):
@@ -135,12 +137,16 @@ class MavLink:
             self.last_heartbeat_at = now
             self._hb_seen.set()
 
-        if self._listeners:
-            for pred, fut in self._listeners:
+        if self._once:
+            for pred, fut in self._once:
                 if not fut.done() and pred(msg):
                     fut.set_result(msg)
 
-            self._listeners = [(p, f) for p, f in self._listeners if not f.done()]
+            self._once = [(p, f) for p, f in self._once if not f.done()]
+
+        if self._handlers:
+            for cb in self._handlers.get(msg.get_msgId(), []):
+                cb(msg, now)
 
     # https://mavlink.io/en/messages/common.html#HEARTBEAT
     async def heartbeat_out(self):
@@ -164,7 +170,7 @@ class MavLink:
 
     async def wait_for(self, pred, timeout=5.0):
         fut = asyncio.get_running_loop().create_future()
-        self._listeners.append((pred, fut))
+        self._once.append((pred, fut))
 
         try:
             async with asyncio.timeout(timeout):
@@ -172,6 +178,9 @@ class MavLink:
         finally:
             if not fut.done():
                 fut.cancel()
+
+    def on(self, msg_id: int, cb: Callable) -> None:
+        self._handlers.setdefault(msg_id, []).append(cb)
 
     # def req_msg(self, msg_id, return_status=True):
     #     cmd = CmdLong(self, MAV.MAV_CMD_REQUEST_MESSAGE, msg_id)

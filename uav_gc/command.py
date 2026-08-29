@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from .link import MavLink
 from typing import Any
 from pymavlink import mavutil
+from functools import partial
 
 MAV = mavutil.mavlink
 
@@ -35,6 +36,14 @@ class CommandAckMsg:
 
 
 @dataclass(frozen=True)
+class MessageIntervalMsg:
+    msg: Any
+
+    def is_enabled(self):
+        return self.msg.interval_us > 0
+
+
+@dataclass(frozen=True)
 class CmdLong:
     client: MavLink
     cmd_id: int
@@ -65,17 +74,73 @@ class CmdLong:
         )
 
     async def recv_ack(self, timeout) -> CommandAckMsg:
-        return CommandAckMsg(
-            self.client.wait_for(
-                lambda m: (
-                    m.get_msgId() == MAV.MAVLINK_MSG_ID_COMMAND_ACK
-                    and m.command == self.cmd_id
-                ),
-                timeout,
+        try:
+            return CommandAckMsg(
+                await self.client.wait_for(
+                    lambda m: (
+                        m.get_msgId() == MAV.MAVLINK_MSG_ID_COMMAND_ACK
+                        and m.command == self.cmd_id
+                    ),
+                    timeout,
+                )
             )
+        except TimeoutError:
+            return CommandAckMsg(None)
+
+
+@dataclass(frozen=True)
+class CmdInt:
+    client: MavLink
+    cmd_id: int
+    p1: float = 0
+    p2: float = 0
+    p3: float = 0
+    p4: float = 0
+    x: int = 0
+    y: int = 0
+    z: int = 0
+    frame: int = 0
+
+    def send(self):
+        # print("Sending")
+        c = self.client.conn
+
+        c.mav.command_int_send(
+            c.target_system,
+            c.target_component,
+            self.frame,
+            0,  # deprecated: current
+            0,  # deprecated: autocontinue
+            self.cmd_id,
+            self.p1,
+            self.p2,
+            self.p3,
+            self.p4,
+            self.x,
+            self.y,
+            self.z,
         )
 
+    async def recv_ack(self, timeout) -> CommandAckMsg:
+        try:
+            return CommandAckMsg(
+                await self.client.wait_for(
+                    lambda m: (
+                        m.get_msgId() == MAV.MAVLINK_MSG_ID_COMMAND_ACK
+                        and m.command == self.cmd_id
+                    ),
+                    timeout,
+                )
+            )
+        except TimeoutError:
+            return CommandAckMsg(None)
 
-ReqSysStatus = lambda client: CmdLong(
-    client, MAV.MAV_CMD_REQUEST_MESSAGE, MAV.MAVLINK_MSG_ID_SYS_STATUS
+
+ReqMessage = lambda msg_id, client: CmdLong(client, cmd_id=MAV.MAV_CMD_REQUEST_MESSAGE, p1=msg_id)
+
+ReqSysStatus = partial(ReqMessage, MAV.MAVLINK_MSG_ID_SYS_STATUS)
+ReqMessageInterval = lambda msg_id, client: CmdLong(client, cmd_id=MAV.MAV_CMD_REQUEST_MESSAGE, p1=MAV.MAVLINK_MSG_ID_MESSAGE_INTERVAL, p2=msg_id)
+
+SetMessageInterval = lambda msg_id, interval_us, client: CmdLong(
+    client, MAV.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, interval_us
 )

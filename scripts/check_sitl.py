@@ -51,15 +51,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-# client = mav_client.MAVClient.from_args()
-# hb = client.wait_heartbeat()
-#
-# check.log(f"mavlink_version={client.protocol_version()}")
-#
-# check.step("hearbeat", hb is not None, f"sysid={client.target_system()}")
-#
-# check.log("checking prearm readiness...")
-#
-# check.step("prearm check", client.is_arm_ready(), f"sysid={client.target_system()}")
