@@ -44,12 +44,25 @@ class Battery:
     at: float
 
 
+@dataclass
+class EKF:
+    flags: int
+    at: float
+
+
+@dataclass
+class SysStatus:
+    onboard_control_sensors_health: int
+    at: float
+
+
 class Vehicle:
     STREAM_RATES_US = {
         MAV.MAVLINK_MSG_ID_ATTITUDE: 250_000,  # 4Hz
         MAV.MAVLINK_MSG_ID_GLOBAL_POSITION_INT: 500_000,  # 2Hz
         MAV.MAVLINK_MSG_ID_SYS_STATUS: 1_000_000,  # 1Hz
         MAV.MAVLINK_MSG_ID_BATTERY_STATUS: 1_000_000,  # 1Hz
+        MAV.MAVLINK_MSG_ID_EKF_STATUS_REPORT: 1_000_000,  # 1Hz
     }
 
     def __init__(self, link: MavLink):
@@ -64,11 +77,12 @@ class Vehicle:
         self.link.on(MAV.MAVLINK_MSG_ID_SYS_STATUS, self._on_sys_status)
         self.link.on(MAV.MAVLINK_MSG_ID_HEARTBEAT, self._on_heartbeat)
         self.link.on(MAV.MAVLINK_MSG_ID_BATTERY_STATUS, self._on_battery_status)
+        self.link.on(MAV.MAVLINK_MSG_ID_EKF_STATUS_REPORT, self._on_ekf_status)
         self.link.on_link_up(self._on_up)
 
         self.mav_mode = None
         self.armed = None
-        self.armable = None
+        self.ekf = None
 
     async def get_message_interval(
         self, msg_id: int, timeout=3.0
@@ -145,8 +159,7 @@ class Vehicle:
         self.attitude = Attitude(roll=msg.roll, pitch=msg.pitch, yaw=msg.yaw, at=at)
 
     def _on_sys_status(self, msg, at):
-        prearm = MAV.MAV_SYS_STATUS_PREARM_CHECK
-        self.armable = bool(msg.onboard_control_sensors_health & prearm)
+        self.sys_status = SysStatus(msg.onboard_control_sensors_health, at)
 
     def _on_heartbeat(self, msg, at):
         # self.mav_mode = MAV.enums["MAV_MODE"][msg.base_mode]
@@ -160,6 +173,7 @@ class Vehicle:
         await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_ATTITUDE)
         await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_GLOBAL_POSITION_INT)
         await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_BATTERY_STATUS)
+        await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_EKF_STATUS_REPORT)
 
     def _on_battery_status(self, msg, at):
         mv = sum(v for v in msg.voltages if v != UINT16_MAX)
@@ -178,6 +192,21 @@ class Vehicle:
             charge_state=MAV.enums["MAV_BATTERY_CHARGE_STATE"][msg.charge_state].name,
             faults=msg.fault_bitmask,
             at=at,
+        )
+
+    def _on_ekf_status(self, msg, at):
+        self.ekf = EKF(flags=msg.flags, at=at)
+
+    def position_ok(self) -> bool:
+        return bool(self.ekf and self.ekf.flags & MAV.EKF_POS_HORIZ_ABS)
+
+    def armable(self) -> bool:
+        return bool(
+            self.ekf
+            and self.ekf.flags & MAV.EKF_POS_HORIZ_ABS
+            and self.sys_status
+            and self.sys_status.onboard_control_sensors_health
+            & MAV.MAV_SYS_STATUS_PREARM_CHECK
         )
 
     async def set_mode(self, name: str, timeout=5.0):

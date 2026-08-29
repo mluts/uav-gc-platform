@@ -51,39 +51,38 @@ class Check:
 async def main():
     check = Check()
 
-    client = link.MavLink.from_args()
+    c = link.MavLink.from_args()
 
-    supervise = asyncio.get_running_loop().create_task(client.supervise())
+    supervise = asyncio.get_running_loop().create_task(c.supervise())
 
     check.log("checking heartbeat...")
 
-    is_up = await client.up()
+    is_up = await c.up()
 
-    check.step("hearbeat", is_up, f"sysid={client.conn.target_system}")
+    check.step("hearbeat", is_up, f"sysid={c.conn.target_system}")
 
     check.log("checking prearm readiness...")
 
-    cmd = command.ReqSysStatus(client)
+    cmd = command.ReqSysStatus(c)
     cmd.send()
-    msg = await client.wait_for(
+    msg = await c.wait_for(
         every_pred(IsSysStatusMsg, SysStatusPrearmReady),
         30
     )
 
-    check.step("prearm check", msg, f"sysid={client.conn.target_system}")
+    check.step("prearm check", msg, f"sysid={c.conn.target_system}")
 
-    uav = vehicle.Vehicle(client)
-    await asyncio.sleep(2)
-
-    print(str(uav.batteries))
+    uav = vehicle.Vehicle(c)
 
     print(f"uav mode {uav.mav_mode}")
     print(f"uav armed {uav.armed}")
 
+    await c.wait_for(lambda _: uav.armable())
+
     await uav.set_mode("GUIDED")
     await uav.arm()
 
-    await asyncio.sleep(2)
+    await c.wait_for(lambda _: uav.armed)
 
     print(f"uav mode {uav.mav_mode}")
     print(f"uav armed {uav.armed}")
