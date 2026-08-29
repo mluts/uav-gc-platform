@@ -5,7 +5,10 @@ from pymavlink import mavutil
 import asyncio
 import math
 
-from pymavlink.dialects.v20.ardupilotmega import MAVLink_heartbeat_message
+from pymavlink.dialects.v20.ardupilotmega import (
+    MAVLink_heartbeat_message,
+    MAVLink_heartbeat_message,
+)
 
 MAV = mavutil.mavlink
 UINT16_MAX = (2**16) - 1
@@ -92,6 +95,8 @@ class Vehicle:
         self.armed = None
         self.ekf = None
 
+        self.sys_status = None
+
     async def get_message_interval(
         self, msg_id: int, timeout=3.0
     ) -> command.MessageIntervalMsg | None:
@@ -169,7 +174,12 @@ class Vehicle:
     def _on_sys_status(self, msg, at):
         self.sys_status = SysStatus(msg.onboard_control_sensors_health, at)
 
-    def _on_heartbeat(self, msg, at):
+    def _on_heartbeat(self, msg: MAVLink_heartbeat_message, at):
+        if (
+            msg.get_srcSystem() != self.link.conn.target_system
+            or msg.autopilot == MAV.MAV_AUTOPILOT_INVALID
+        ):
+            return
         # self.mav_mode = MAV.enums["MAV_MODE"][msg.base_mode]
         self.mav_mode = mavutil.mode_string_v10(msg)
         self.armed = bool(msg.base_mode & MAV.MAV_MODE_FLAG_SAFETY_ARMED)
@@ -271,7 +281,7 @@ class Vehicle:
             await self.link.wait_for(lambda _: self.armed == want, timeout)
         except TimeoutError:
             raise RuntimeError(
-                f"arm={want} accepted but not confirmed without {timeout}s"
+                f"arm={want} accepted but not confirmed within {timeout}s"
             )
 
     async def arm(self, timeout=5.0):
@@ -299,7 +309,7 @@ class Vehicle:
             timeout=timeout,
         )
 
-    def _arrived(self, lat, lon, alt_rel, horizx_tol=2.0, alt_tol=0.0):
+    def _arrived(self, lat, lon, alt_rel, horizx_tol=2.0, alt_tol=2.0):
         p = self.position
         return (
             p

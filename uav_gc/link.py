@@ -34,17 +34,9 @@ class MavLink:
         self,
         dev,
         baud=115200,
-        wait_timeout=60,
-        ack_timeout=10,
-        retries=3,
-        deadline_max=60,
     ):
         self.dev = dev
         self.baud = baud
-        self.ack_timeout = ack_timeout
-        self.retries = retries
-        self.deadline_max = deadline_max
-        self.wait_timeout = wait_timeout
 
         self.latest: dict[str, tuple] = {}
         self.last_heartbeat_at: float | None = None
@@ -58,6 +50,8 @@ class MavLink:
         self.last_error = None
 
         self._session_up_cbs: list[Callable] = []
+
+        self._dead_reason = None
 
     @classmethod
     def from_args(cls):
@@ -134,7 +128,7 @@ class MavLink:
 
     def _on_readable(self):
         # when you kill sitl, you get tcp doom loop on link :(
-        if self.conn.port.type == socket.SOCK_STREAM: # only for tcp
+        if self.conn.port.type == socket.SOCK_STREAM:  # only for tcp
             try:
                 if self.conn.port.recv(1, socket.MSG_PEEK) == b"":
                     self._mark_dead("EOF on link socket (peer closed)")
@@ -217,6 +211,8 @@ class MavLink:
             if not fut.done():
                 fut.set_exception(LinkDown("link is down"))
         self._once.clear()
+        self._dead_reason = None
+        self._session_tg = None
 
     async def supervise(self):
         backoff = 1.0
@@ -230,14 +226,14 @@ class MavLink:
 
                 async with asyncio.TaskGroup() as tg:
                     self._start_reader()
-                    self._session_tg = tg
-                    self.last_error = None
+                    self._session_tg: asyncio.TaskGroup | None = tg
                     tg.create_task(self.heartbeat_out())
                     tg.create_task(self.watchdog())
 
                     await self._hb_seen.wait()
                     log.info("Link is up...")
                     self.status = self.LinkStatus.UP
+                    self.last_error = None
                     for cb in self._session_up_cbs:
                         tg.create_task(self._run_hook(cb))
                     backoff = 1.0
@@ -260,6 +256,9 @@ class MavLink:
 
             if self._started_at is None:
                 raise RuntimeError("Can't start watchdog before link")
+
+            if self._dead_reason:
+                raise LinkDown(self._dead_reason)
 
             ref = self.last_heartbeat_at or self._started_at
 

@@ -79,7 +79,7 @@ async def main():
     print(f"uav mode {uav.mav_mode}")
     print(f"uav armed {uav.armed}")
 
-    await c.wait_for(lambda _: uav.armable)
+    await c.wait_for(lambda _: uav.armable, timeout=90)
 
     await uav.set_mode("GUIDED")
     await uav.arm()

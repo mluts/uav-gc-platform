@@ -37,7 +37,7 @@ def snapshot(vehicle: Vehicle, link: MavLink) -> dict:
         "link": {
             "status": link.status.name,
             "last_error": link.last_error,
-            "heartbeat_age_s": None if hb is None else round(now - hb[1]),
+            "heartbeat_age_s": None if hb is None else round(now - hb[1], 2),
         },
         "ts": time.time(),
     }

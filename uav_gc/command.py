@@ -35,7 +35,7 @@ class CommandAckMsg:
         return not (self.is_in_progress() or self.is_accepted())
 
     def is_no_response(self) -> bool:
-        return not self.result()[0]
+        return not self.msg
 
 
 @dataclass(frozen=True)
@@ -112,9 +112,9 @@ class CmdInt:
             c.target_system,
             c.target_component,
             self.frame,
+            self.cmd_id,
             0,  # deprecated: current
             0,  # deprecated: autocontinue
-            self.cmd_id,
             self.p1,
             self.p2,
             self.p3,
