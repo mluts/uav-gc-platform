@@ -212,6 +212,8 @@ class MavLink:
 
                 async with asyncio.TaskGroup() as tg:
                     self._start_reader()
+                    self._session_tg = tg
+                    self.last_error = None
                     tg.create_task(self.heartbeat_out())
                     tg.create_task(self.watchdog())
 
@@ -248,6 +250,9 @@ class MavLink:
 
     def on_link_up(self, cb) -> None:
         self._session_up_cbs.append(cb)
+        # late to the party, but still welcome
+        if self.status == self.LinkStatus.UP and self._session_tg is not None:
+            self._session_tg.create_task(self._run_hook(cb))
 
     async def _run_hook(self, cb):
         try:
