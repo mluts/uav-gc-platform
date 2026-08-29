@@ -40,6 +40,7 @@ def snapshot(vehicle: Vehicle, link: MavLink) -> dict:
             "heartbeat_age_s": None if hb is None else round(now - hb[1], 2),
         },
         "ts": time.time(),
+        "protocol_version": link.protocol_version()
     }
 
 

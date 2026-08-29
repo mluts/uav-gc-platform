@@ -128,7 +128,7 @@ class MavLink:
 
     def _on_readable(self):
         # when you kill sitl, you get tcp doom loop on link :(
-        if self.conn.port.type == socket.SOCK_STREAM:  # only for tcp
+        if getattr(self.conn.port, "type", None) == socket.SOCK_STREAM:  # only for tcp
             try:
                 if self.conn.port.recv(1, socket.MSG_PEEK) == b"":
                     self._mark_dead("EOF on link socket (peer closed)")
