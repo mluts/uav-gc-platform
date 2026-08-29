@@ -8,10 +8,12 @@ from pymavlink.dialects.v20.ardupilotmega import MAVLink_message
 from typing import Callable
 import logging
 from enum import auto, Enum
+import socket
 
 MAV = mavutil.mavlink
 
 log = logging.getLogger(__name__)
+
 
 class LinkDown(Exception):
     pass
@@ -123,7 +125,26 @@ class MavLink:
 
         return self._hb_seen.is_set()
 
+    def _mark_dead(self, reason: str):
+        try:
+            asyncio.get_running_loop().remove_reader(self.conn.port.fileno())
+        except (OSError, ValueError):
+            pass
+        self._dead_reason = reason
+
     def _on_readable(self):
+        # when you kill sitl, you get tcp doom loop on link :(
+        if self.conn.port.type == socket.SOCK_STREAM: # only for tcp
+            try:
+                if self.conn.port.recv(1, socket.MSG_PEEK) == b"":
+                    self._mark_dead("EOF on link socket (peer closed)")
+                    return
+            except BlockingIOError:
+                pass
+            except OSError as e:
+                self._mark_dead(f"socket error: {e}")
+                return
+
         while (msg := self.conn.recv_match(blocking=False)) is not None:
             self._dispatch(msg)
 
@@ -149,9 +170,7 @@ class MavLink:
                     if not fut.done() and pred(msg):
                         fut.set_result(msg)
                 except Exception:
-                    log.exception(
-                        "waiting_for handler failed for %s", msg.get_type()
-                    )
+                    log.exception("waiting_for handler failed for %s", msg.get_type())
 
             self._once = [(p, f) for p, f in self._once if not f.done()]
 

@@ -1,4 +1,4 @@
-.PHONY: run uav-sitl rm-uav-sitl check repl
+.PHONY: run-udp run-tcp stats sitl kill check check-tcp repl uav-sitl rm-uav-sitl ardupilotmega
 
 run-udp: 
 	PYTHONPATH=. ./.venv/bin/python3 -m uav_gc --udp 127.0.0.1:14550
@@ -10,7 +10,7 @@ stats:
 	curl 127.0.0.1:8080/stats | jq
 
 sitl: uav-sitl
-	docker run -it --rm -p 127.0.0.1:5762:5762 uav-sitl
+	docker run --name uav-sitl -it --rm --add-host=host.docker.internal:host-gateway -p 127.0.0.1:5762:5762 uav-sitl
 
 kill:
 	docker kill uav-sitl

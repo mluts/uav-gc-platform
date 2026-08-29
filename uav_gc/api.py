@@ -10,6 +10,7 @@ from .vehicle import Vehicle
 
 log = logging.getLogger(__name__)
 
+
 def snapshot(vehicle: Vehicle, link: MavLink) -> dict:
     now = time.monotonic()
 
@@ -47,7 +48,7 @@ async def do_arm(vehicle: Vehicle) -> dict:
         await vehicle.arm()
 
         return {"armed": vehicle.armed}
-    except Exception as e:
+    except (RuntimeError, ValueError, TimeoutError) as e:
         return {"armed": vehicle.armed, "error": str(e)}
 
 
@@ -56,7 +57,7 @@ async def do_disarm(vehicle: Vehicle) -> dict:
         await vehicle.disarm()
 
         return {"armed": vehicle.armed}
-    except Exception as e:
+    except (RuntimeError, ValueError, TimeoutError) as e:
         return {"armed": vehicle.armed, "error": str(e)}
 
 
@@ -64,7 +65,7 @@ async def do_set_mode(vehicle: Vehicle, mode: str) -> dict:
     try:
         await vehicle.set_mode(mode and mode.upper())
         return {"mode": vehicle.mav_mode}
-    except Exception as e:
+    except (RuntimeError, ValueError, TimeoutError) as e:
         return {"mode": vehicle.mav_mode, "error": str(e)}
 
 
@@ -73,17 +74,26 @@ class Api:
         self.vehicle = vehicle
         self.link = link
 
-    async def stats(self, _req: web.Request) -> web.Response:
+    async def stats(self, _: web.Request) -> web.Response:
         return web.json_response(snapshot(self.vehicle, self.link))
 
-    async def arm(self, _req: web.Request) -> web.Response:
-        return web.json_response(await do_arm(self.vehicle))
+    async def arm(self, _: web.Request) -> web.Response:
+        resp = await do_arm(self.vehicle)
+        return web.json_response(resp, status=400 if "error" in resp else 200)
 
-    async def disarm(self, _req: web.Request) -> web.Response:
-        return web.json_response(await do_disarm(self.vehicle))
+    async def disarm(self, _: web.Request) -> web.Response:
+        resp = await do_disarm(self.vehicle)
+        return web.json_response(resp, status=400 if "error" in resp else 200)
 
     async def set_mode(self, req: web.Request) -> web.Response:
-        return web.json_response(await do_set_mode(self.vehicle, req.query["newmode"]))
+        newmode = req.query.get("newmode")
+        if newmode is None:
+            return web.json_response(
+                {"error": 'please specify "newmode" param'}, status=400
+            )
+
+        resp = await do_set_mode(self.vehicle, newmode)
+        return web.json_response(resp, status=400 if "error" in resp else 200)
 
     def app(self) -> web.Application:
         app = web.Application()
