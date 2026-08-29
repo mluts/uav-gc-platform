@@ -34,6 +34,9 @@ class CommandAckMsg:
     def is_unsuccessful(self) -> bool:
         return not (self.is_in_progress() or self.is_accepted())
 
+    def is_no_response(self) -> bool:
+        return not self.result()[0]
+
 
 @dataclass(frozen=True)
 class MessageIntervalMsg:
@@ -136,10 +139,19 @@ class CmdInt:
             return CommandAckMsg(None)
 
 
-ReqMessage = lambda msg_id, client: CmdLong(client, cmd_id=MAV.MAV_CMD_REQUEST_MESSAGE, p1=msg_id)
+ReqMessage = lambda msg_id, client: CmdLong(
+    client, cmd_id=MAV.MAV_CMD_REQUEST_MESSAGE, p1=msg_id
+)
 
 ReqSysStatus = partial(ReqMessage, MAV.MAVLINK_MSG_ID_SYS_STATUS)
-ReqMessageInterval = lambda msg_id, client: CmdLong(client, cmd_id=MAV.MAV_CMD_REQUEST_MESSAGE, p1=MAV.MAVLINK_MSG_ID_MESSAGE_INTERVAL, p2=msg_id)
+
+# ReqMessageInterval(msg_id, client) - request interval for given msg_id
+ReqMessageInterval = lambda msg_id, client: CmdLong(
+    client,
+    cmd_id=MAV.MAV_CMD_REQUEST_MESSAGE,
+    p1=MAV.MAVLINK_MSG_ID_MESSAGE_INTERVAL,
+    p2=msg_id,
+)
 
 SetMessageInterval = lambda msg_id, interval_us, client: CmdLong(
     client, MAV.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, interval_us

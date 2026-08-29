@@ -4,6 +4,26 @@ import sys
 
 from uav_gc import link, command
 import asyncio
+from functools import reduce
+import logging
+import os
+
+MAV = link.MAV
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
+
+#
+def every_pred(*preds):
+    return lambda v: reduce((lambda res, pred: res and pred(v)), preds, True)
+
+
+IsSysStatusMsg = lambda msg: msg.get_msgId() == MAV.MAVLINK_MSG_ID_SYS_STATUS
+SysStatusPrearmReady = lambda msg: (
+    msg.onboard_control_sensors_health & MAV.MAV_SYS_STATUS_PREARM_CHECK
+)
 
 
 class Check:
@@ -32,7 +52,8 @@ async def main():
     check = Check()
 
     client = link.MavLink.from_args()
-    client.start()
+
+    supervise = asyncio.get_running_loop().create_task(client.supervise())
 
     check.log("checking heartbeat...")
 
@@ -44,9 +65,13 @@ async def main():
 
     cmd = command.ReqSysStatus(client)
     cmd.send()
-    msg = await client.wait_for(link.every_pred(link.IsSysStatusMsg, link.SysStatusPrearmReady))
+    msg = await client.wait_for(
+        every_pred(IsSysStatusMsg, SysStatusPrearmReady)
+    )
 
     check.step("prearm check", msg, f"sysid={client.conn.target_system}")
+
+    supervise.cancel()
 
 
 if __name__ == "__main__":

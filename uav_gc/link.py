@@ -7,6 +7,8 @@ from pymavlink import mavutil
 from pymavlink.dialects.v20.ardupilotmega import MAVLink_message
 from typing import Callable
 from functools import reduce
+import logging
+from enum import auto, Enum
 
 MAV = mavutil.mavlink
 
@@ -15,22 +17,16 @@ class LinkDown(Exception):
     pass
 
 
-def every_pred(*preds):
-    return lambda v: reduce((lambda res, pred: res and pred(v)), preds, True)
-
-
-IsSysStatusMsg = lambda msg: msg.get_msgId() == MAV.MAVLINK_MSG_ID_SYS_STATUS
-SysStatusPrearmReady = lambda msg: (
-    msg.onboard_control_sensors_health & MAV.MAV_SYS_STATUS_PREARM_CHECK
-)
-
-
 class MavLink:
     HEARTBEAT_PERIOD = 1.0
     HEARTBEAT_TIMEOUT = 5.0
-    WATCHDOG_TIME = 1.0
 
     conn: mavutil.mavfile
+
+    class LinkStatus(Enum):
+        CONNECTING = auto()
+        UP = auto()
+        DOWN = auto()
 
     def __init__(
         self,
@@ -41,7 +37,9 @@ class MavLink:
         retries=3,
         deadline_max=60,
     ):
-        self.conn = mavutil.mavlink_connection(dev, baud=baud)
+        # self.conn = mavutil.mavlink_connection(dev, baud=baud)
+        self.dev = dev
+        self.baud = baud
         self.ack_timeout = ack_timeout
         self.retries = retries
         self.deadline_max = deadline_max
@@ -54,6 +52,11 @@ class MavLink:
         self._once: list[tuple[Callable, asyncio.Future]] = []
         self._handlers: dict[int, list[Callable]] = {}
         self._started_at = None
+
+        self.status = self.LinkStatus.DOWN
+        self.last_error = None
+
+        self._session_up_cbs: list[Callable] = []
 
     @classmethod
     def from_args(cls):
@@ -110,14 +113,10 @@ class MavLink:
     def protocol_version(self):
         return self.conn.WIRE_PROTOCOL_VERSION
 
-    def start(self):
+    def _start_reader(self):
         loop = asyncio.get_running_loop()
         loop.add_reader(self.conn.port.fileno(), self._on_readable)
         self._started_at = time.monotonic()
-
-    def stop(self):
-        asyncio.get_running_loop().remove_reader(self.conn.port.fileno())
-        self.conn.close()
 
     async def up(self, timeout=10):
         async with asyncio.timeout(timeout):
@@ -139,14 +138,22 @@ class MavLink:
 
         if self._once:
             for pred, fut in self._once:
-                if not fut.done() and pred(msg):
-                    fut.set_result(msg)
+                try:
+                    if not fut.done() and pred(msg):
+                        fut.set_result(msg)
+                except Exception:
+                    logging.exception(
+                        "waiting_for handler failed for %s", msg.get_type()
+                    )
 
             self._once = [(p, f) for p, f in self._once if not f.done()]
 
         if self._handlers:
             for cb in self._handlers.get(msg.get_msgId(), []):
-                cb(msg, now)
+                try:
+                    cb(msg, now)
+                except Exception:
+                    logging.exception("handler failed for %s", msg.get_type())
 
     # https://mavlink.io/en/messages/common.html#HEARTBEAT
     async def heartbeat_out(self):
@@ -155,18 +162,6 @@ class MavLink:
                 MAV.MAV_TYPE_GCS, MAV.MAV_AUTOPILOT_INVALID, 0, 0, MAV.MAV_STATE_ACTIVE
             )
             await asyncio.sleep(self.HEARTBEAT_PERIOD)
-
-    async def watchdog(self):
-        while True:
-            await asyncio.sleep(self.WATCHDOG_TIME)
-
-            if self._started_at is None:
-                raise RuntimeError("Can't start watchhdog before link")
-
-            ref = self.last_heartbeat_at or self._started_at
-
-            if (age := time.monotonic() - ref) > self.HEARTBEAT_TIMEOUT:
-                raise LinkDown(f"No heartbeat for {age:.1f}s")
 
     async def wait_for(self, pred, timeout=5.0):
         fut = asyncio.get_running_loop().create_future()
@@ -182,33 +177,81 @@ class MavLink:
     def on(self, msg_id: int, cb: Callable) -> None:
         self._handlers.setdefault(msg_id, []).append(cb)
 
-    # def req_msg(self, msg_id, return_status=True):
-    #     cmd = CmdLong(self, MAV.MAV_CMD_REQUEST_MESSAGE, msg_id)
-    #
-    #     cmd_exec = CommandExecutor(
-    #         cmd, self.ack_timeout, self.retries, self.deadline_max
-    #     )
-    #
-    #     return AckStatus.return_or_raise(
-    #         cmd_exec.send_and_confirm(), return_status=return_status
-    #     )
-    #
-    # # https://mavlink.io/en/messages/common.html#SYS_STATUS
-    # def req_sys_status(self, return_status=True):
-    #     return self.req_msg(MAV.MAVLINK_MSG_ID_SYS_STATUS, return_status=return_status)
-    #
-    # def is_arm_ready(self, wait_timeout=60, return_status=True):
-    #     (status, _) = AckStatus.return_or_raise(self.req_sys_status(return_status=return_status))
-    #
-    #     if status != AckStatus.Accepted:
-    #         return False
-    #
-    #     msg = self.conn.recv_match(
-    #         type="SYS_STATUS",
-    #         blocking=True,
-    #         timeout=wait_timeout,
-    #     )
-    #
-    #     return msg and (
-    #         msg.onboard_control_sensors_health & MAV.MAV_SYS_STATUS_PREARM_CHECK
-    #     )
+    async def _dial(self):
+        self.conn = await asyncio.to_thread(
+            mavutil.mavlink_connection, self.dev, baud=self.baud
+        )
+
+    def _teardown(self):
+        if (conn := getattr(self, "conn", None)) is not None:
+            try:
+                asyncio.get_running_loop().remove_reader(conn.port.fileno())
+            except (OSError, ValueError):
+                pass
+            conn.close()
+
+        self.last_heartbeat_at = None
+        self._hb_seen.clear()
+
+        # Drop loudly wait_for listeners
+        for _, fut in self._once:
+            if not fut.done():
+                fut.set_exception(LinkDown("link is down"))
+        self._once.clear()
+
+    async def supervise(self):
+        backoff = 1.0
+
+        while True:
+            self.status = self.LinkStatus.CONNECTING
+            logging.info("Connecting...")
+
+            try:
+                await self._dial()
+
+                async with asyncio.TaskGroup() as tg:
+                    self._start_reader()
+                    tg.create_task(self.heartbeat_out())
+                    tg.create_task(self.watchdog())
+
+                    await self._hb_seen.wait()
+                    logging.info("Link is up...")
+                    self.status = self.LinkStatus.UP
+                    for cb in self._session_up_cbs:
+                        tg.create_task(self._run_hook(cb))
+                    backoff = 1.0
+
+                    await asyncio.Event().wait()
+
+            except* (LinkDown, ConnectionError, OSError) as eg:
+                logging.warning("Link is down...")
+                self.status = self.LinkStatus.DOWN
+                self.last_error = str(eg.exceptions[0])
+                self._teardown()
+
+            await asyncio.sleep(backoff)
+
+            backoff = min(backoff * 2, 30.0)
+
+    async def watchdog(self):
+        while True:
+            await asyncio.sleep(1)
+
+            if self._started_at is None:
+                raise RuntimeError("Can't start watchdog before link")
+
+            ref = self.last_heartbeat_at or self._started_at
+
+            if (age := time.monotonic() - ref) > self.HEARTBEAT_TIMEOUT:
+                raise LinkDown(f"No heartbeat for {age:.1f}s")
+
+    def on_link_up(self, cb) -> None:
+        self._session_up_cbs.append(cb)
+
+    async def _run_hook(self, cb):
+        try:
+            await cb()
+        except LinkDown:
+            pass
+        except Exception:
+            logging.exception("session-up hook failed")

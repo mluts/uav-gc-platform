@@ -4,14 +4,17 @@ from . import command
 from pymavlink import mavutil
 import asyncio
 
+from pymavlink.dialects.v20.ardupilotmega import MAVLink_heartbeat_message
+
 MAV = mavutil.mavlink
+UINT16_MAX = (2**16) - 1
 
 
 @dataclass
 class Position:
     lat: float
     lon: float  # deg
-    alt_msl: float
+    alt_msl: float  # m
     alt_rel: float  # m
     vn: float
     ve: float
@@ -30,25 +33,31 @@ class Attitude:
 
 @dataclass
 class Battery:
-    voltage: float | None
-    current: float | None
-    remaining_pct: int | None
+    voltage: float | None  # V
+    current: float | None  # A
+    remaining_pct: int | None  # %
     at: float
 
 
 class Vehicle:
-    TELEMETRY_INTERVAL_US: int = 1_000_000
+    STREAM_RATES_US = {
+        MAV.MAVLINK_MSG_ID_ATTITUDE: 250_000,  # 4Hz
+        MAV.MAVLINK_MSG_ID_GLOBAL_POSITION_INT: 500_000,  # 2Hz
+        MAV.MAVLINK_MSG_ID_SYS_STATUS: 1_000_000,  # 1Hz
+    }
 
     def __init__(self, link: MavLink):
         self.link = link
         self.position: Position | None = None
         self.attitude: Attitude | None = None
         self.battery: Battery | None = None
+        self.last_heartbeat: tuple[MAVLink_heartbeat_message, float] | None = None
 
         self.link.on(MAV.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, self._on_position)
         self.link.on(MAV.MAVLINK_MSG_ID_ATTITUDE, self._on_attitude)
         self.link.on(MAV.MAVLINK_MSG_ID_SYS_STATUS, self._on_sys_status)
         self.link.on(MAV.MAVLINK_MSG_ID_HEARTBEAT, self._on_heartbeat)
+        self.link.on_link_up(self._on_up)
 
     async def get_message_interval(
         self, msg_id: int, timeout=3.0
@@ -61,7 +70,8 @@ class Vehicle:
                 lambda m: (
                     m.get_msgId() == MAV.MAVLINK_MSG_ID_MESSAGE_INTERVAL
                     and m.message_id == msg_id
-                )
+                ),
+                timeout=timeout,
             )
         )
 
@@ -75,44 +85,71 @@ class Vehicle:
             {reply, ack}, return_when=asyncio.FIRST_COMPLETED
         )
 
-        if ack in done and ack.result().is_unsuccessful():
-            reply.cancel()
-            return None
-
         try:
+            if ack in done and ack.result().is_unsuccessful():
+                reply.cancel()
+                return None
+
             return command.MessageIntervalMsg(await reply)
         except TimeoutError:
             return None
+        finally:
+            ack.cancel()
+            reply.cancel()
 
     async def maybe_set_message_interval(self, msg_id):
         mi = await self.get_message_interval(msg_id)
 
         if mi is None or not mi.is_enabled():
             cmd = command.SetMessageInterval(
-                msg_id, self.TELEMETRY_INTERVAL_US, self.link
+                msg_id, self.STREAM_RATES_US[msg_id], self.link
             )
             cmd.send()
             ack = await cmd.recv_ack(3.0)
 
             if ack.is_unsuccessful():
-                raise RuntimeError(
-                    f"SET_MESSAGE_INTERVAL for MSG {msg_id} refused: {ack.result()}"
-                )
+                if ack.is_no_response():
+                    raise RuntimeError(
+                        f"SET_MESSAGE_INTERVAL for MSG {msg_id} had no response: {ack.result()}"
+                    )
+                else:
+                    raise RuntimeError(
+                        f"SET_MESSAGE_INTERVAL for MSG {msg_id} refused: {ack.result()}"
+                    )
 
-    async def start(self):
+    def _on_position(self, msg, at):
+        self.position = Position(
+            lat=msg.lat / 1e7,
+            lon=msg.lon / 1e7,
+            alt_msl=msg.alt / 1000,
+            alt_rel=msg.relative_alt / 1000,
+            vn=msg.vx / 100,
+            ve=msg.vy / 100,
+            vd=msg.vz / 100,
+            heading=None if msg.hdg == UINT16_MAX else msg.hdg / 100,
+            at=at,
+        )
 
+    def _on_attitude(self, msg, at):
+        self.attitude = Attitude(roll=msg.roll, pitch=msg.pitch, yaw=msg.yaw, at=at)
+
+    def _on_sys_status(self, msg, at):
+        self.battery = Battery(
+            voltage=None
+            if msg.voltage_battery == UINT16_MAX
+            else msg.voltage_battery / 1000,
+            current=None if msg.current_battery == -1 else msg.current_battery / 100,
+            remaining_pct=None
+            if msg.battery_remaining == -1
+            else msg.battery_remaining,
+            at=at,
+        )
+
+    def _on_heartbeat(self, msg, at):
+        self.last_heartbeat = (msg, at)
+
+    async def _on_up(self):
+        # can't parallelize, oterwise will mixup COMMAND_ACK
         await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_SYS_STATUS)
         await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_ATTITUDE)
         await self.maybe_set_message_interval(MAV.MAVLINK_MSG_ID_GLOBAL_POSITION_INT)
-
-    def _on_position(self, msg):
-        pass
-
-    def _on_attitude(self, msg):
-        pass
-
-    def _on_sys_status(self, msg):
-        pass
-
-    def _on_heartbeat(self, msg):
-        pass
