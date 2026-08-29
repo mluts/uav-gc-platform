@@ -4,7 +4,8 @@ run: uav-sitl
 	docker run -it --rm -p 127.0.0.1:5762:5762 uav-sitl
 
 check:
-	PYTHONPATH=. ./.venv/bin/python3 ./scripts/check_sitl.py
+	# PYTHONPATH=. ./.venv/bin/python3 ./scripts/check_sitl.py --tcp 127.0.0.1:5762
+	PYTHONPATH=. ./.venv/bin/python3 ./scripts/check_sitl.py --udp 127.0.0.1:14550
 
 repl:
 	PYTHONSTARTUP="$(CURDIR)/.pythonstartup.py" ./.venv/bin/python3

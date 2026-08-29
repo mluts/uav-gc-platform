@@ -29,29 +29,16 @@ class Check:
 
 check = Check()
 
-check.log("")
-
-client = mav_client.MAVClient(mav_client.SITL_SERIAL1)
+client = mav_client.MAVClient.from_args()
 
 check.log("checking heartbeat...")
-
-check.log("")
 
 hb = client.wait_heartbeat()
 
 check.log(f"mavlink_version={client.protocol_version()}")
 
-check.log("")
-
 check.step("hearbeat", hb is not None, f"sysid={client.target_system()}")
-
-check.log("")
 
 check.log("checking prearm readiness...")
 
-check.log("")
-
 check.step("prearm check", client.is_arm_ready(), f"sysid={client.target_system()}")
-
-check.log("")
-
