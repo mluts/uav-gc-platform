@@ -2,7 +2,7 @@
 
 import sys
 
-from uav_gc import link, command
+from uav_gc import link, command, vehicle
 import asyncio
 from functools import reduce
 import logging
@@ -66,10 +66,27 @@ async def main():
     cmd = command.ReqSysStatus(client)
     cmd.send()
     msg = await client.wait_for(
-        every_pred(IsSysStatusMsg, SysStatusPrearmReady)
+        every_pred(IsSysStatusMsg, SysStatusPrearmReady),
+        30
     )
 
     check.step("prearm check", msg, f"sysid={client.conn.target_system}")
+
+    uav = vehicle.Vehicle(client)
+    await asyncio.sleep(2)
+
+    print(str(uav.batteries))
+
+    print(f"uav mode {uav.mav_mode}")
+    print(f"uav armed {uav.armed}")
+
+    await uav.set_mode("GUIDED")
+    await uav.arm()
+
+    await asyncio.sleep(2)
+
+    print(f"uav mode {uav.mav_mode}")
+    print(f"uav armed {uav.armed}")
 
     supervise.cancel()
 

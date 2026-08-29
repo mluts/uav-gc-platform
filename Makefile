@@ -3,6 +3,9 @@
 run: uav-sitl
 	docker run -it --rm -p 127.0.0.1:5762:5762 uav-sitl
 
+kill:
+	docker kill uav-sitl
+
 check:
 	# PYTHONPATH=. ./.venv/bin/python3 ./scripts/check_sitl.py --tcp 127.0.0.1:5762
 	PYTHONPATH=. ./.venv/bin/python3 ./scripts/check_sitl.py --udp 127.0.0.1:14550

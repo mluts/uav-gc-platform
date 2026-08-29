@@ -136,6 +136,14 @@ class MavLink:
             self.last_heartbeat_at = now
             self._hb_seen.set()
 
+        # Must run before _once, so consumers may use wait_for to wait for updated state
+        if self._handlers:
+            for cb in self._handlers.get(msg.get_msgId(), []):
+                try:
+                    cb(msg, now)
+                except Exception:
+                    logging.exception("handler failed for %s", msg.get_type())
+
         if self._once:
             for pred, fut in self._once:
                 try:
@@ -147,13 +155,6 @@ class MavLink:
                     )
 
             self._once = [(p, f) for p, f in self._once if not f.done()]
-
-        if self._handlers:
-            for cb in self._handlers.get(msg.get_msgId(), []):
-                try:
-                    cb(msg, now)
-                except Exception:
-                    logging.exception("handler failed for %s", msg.get_type())
 
     # https://mavlink.io/en/messages/common.html#HEARTBEAT
     async def heartbeat_out(self):
