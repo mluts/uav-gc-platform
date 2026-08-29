@@ -6,12 +6,12 @@ import time
 from pymavlink import mavutil
 from pymavlink.dialects.v20.ardupilotmega import MAVLink_message
 from typing import Callable
-from functools import reduce
 import logging
 from enum import auto, Enum
 
 MAV = mavutil.mavlink
 
+log = logging.getLogger(__name__)
 
 class LinkDown(Exception):
     pass
@@ -141,7 +141,7 @@ class MavLink:
                 try:
                     cb(msg, now)
                 except Exception:
-                    logging.exception("handler failed for %s", msg.get_type())
+                    log.exception("handler failed for %s", msg.get_type())
 
         if self._once:
             for pred, fut in self._once:
@@ -149,7 +149,7 @@ class MavLink:
                     if not fut.done() and pred(msg):
                         fut.set_result(msg)
                 except Exception:
-                    logging.exception(
+                    log.exception(
                         "waiting_for handler failed for %s", msg.get_type()
                     )
 
@@ -204,7 +204,7 @@ class MavLink:
 
         while True:
             self.status = self.LinkStatus.CONNECTING
-            logging.info("Connecting...")
+            log.info("Connecting...")
 
             try:
                 await self._dial()
@@ -217,7 +217,7 @@ class MavLink:
                     tg.create_task(self.watchdog())
 
                     await self._hb_seen.wait()
-                    logging.info("Link is up...")
+                    log.info("Link is up...")
                     self.status = self.LinkStatus.UP
                     for cb in self._session_up_cbs:
                         tg.create_task(self._run_hook(cb))
@@ -226,7 +226,7 @@ class MavLink:
                     await asyncio.Event().wait()
 
             except* (LinkDown, ConnectionError, OSError) as eg:
-                logging.warning("Link is down...")
+                log.warning("Link is down...")
                 self.status = self.LinkStatus.DOWN
                 self.last_error = str(eg.exceptions[0])
                 self._teardown()
@@ -259,4 +259,4 @@ class MavLink:
         except LinkDown:
             pass
         except Exception:
-            logging.exception("session-up hook failed")
+            log.exception("session-up hook failed")

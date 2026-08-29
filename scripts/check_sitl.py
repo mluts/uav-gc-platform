@@ -10,6 +10,8 @@ import os
 
 MAV = link.MAV
 
+log = logging.getLogger(__name__)
+
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",

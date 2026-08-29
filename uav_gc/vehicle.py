@@ -3,12 +3,20 @@ from .link import MavLink
 from . import command
 from pymavlink import mavutil
 import asyncio
+import math
 
 from pymavlink.dialects.v20.ardupilotmega import MAVLink_heartbeat_message
 
 MAV = mavutil.mavlink
 UINT16_MAX = (2**16) - 1
 INT16_MAX = (2**15) - 1
+
+
+def dist_m(lat1, lon1, lat2, lon2):
+    k = 111_319.5  # m per degree latitude
+    dx = (lon2 - lon1) * k * math.cos(math.radians(lat1))
+    dy = (lat2 - lat1) * k
+    return math.hypot(dx, dy)
 
 
 @dataclass
@@ -271,3 +279,64 @@ class Vehicle:
 
     async def disarm(self, timeout=5.0):
         await self._arm_disarm(False, timeout)
+
+    async def takeoff(self, alt_rel: float, timeout=45.0):
+        if self.mav_mode != "GUIDED" or not self.armed:
+            raise RuntimeError(
+                f"takeoff requires GUIDED+armed (mode={self.mav_mode}, armed={self.armed})"
+            )
+
+        cmd = command.CmdLong(self.link, MAV.MAV_CMD_NAV_TAKEOFF, p7=alt_rel)
+        cmd.send()
+
+        ack = await cmd.recv_ack(3.0)
+
+        if not ack.is_accepted():
+            raise RuntimeError(f"takeoff refused: {ack.result()}")
+
+        await self.link.wait_for(
+            lambda _: self.position and self.position.alt_rel >= alt_rel * 0.95,
+            timeout=timeout,
+        )
+
+    def _arrived(self, lat, lon, alt_rel, horizx_tol=2.0, alt_tol=0.0):
+        p = self.position
+        return (
+            p
+            and dist_m(p.lat, p.lon, lat, lon) < horizx_tol
+            and abs(p.alt_rel - alt_rel) < alt_tol
+        )
+
+    # https://mavlink.io/en/messages/common.html#MAV_CMD_DO_REPOSITION
+    # speed=-1 for default
+    async def goto(
+        self, lat: float, lon: float, alt_rel: int, speed=-1.0, timeout=None
+    ):
+        if self.mav_mode != "GUIDED":
+            raise RuntimeError(f"goto requires GUIDED (mode={self.mav_mode})")
+
+        cmd = command.CmdInt(
+            self.link,
+            MAV.MAV_CMD_DO_REPOSITION,
+            p1=speed,
+            p2=0,
+            p4=float("nan"),
+            x=int(round(lat * 1e7)),
+            y=int(round(lon * 1e7)),
+            z=alt_rel,
+            frame=MAV.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+        )
+        cmd.send()
+
+        ack = await cmd.recv_ack(3.0)
+
+        if not ack.is_accepted():
+            raise RuntimeError(f"reposition refused: {ack.result()}")
+
+        if self.position is None:
+            raise RuntimeError(f"can't navigate without position:")
+
+        if timeout is None:
+            timeout = 10 + dist_m(self.position.lat, self.position.lon, lat, lon) / 2
+
+        await self.link.wait_for(lambda _: self._arrived(lat, lon, alt_rel), timeout)

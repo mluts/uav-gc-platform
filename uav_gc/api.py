@@ -8,6 +8,7 @@ from aiohttp import web
 from .link import MavLink
 from .vehicle import Vehicle
 
+log = logging.getLogger(__name__)
 
 def snapshot(vehicle: Vehicle, link: MavLink) -> dict:
     now = time.monotonic()
@@ -59,9 +60,9 @@ async def do_disarm(vehicle: Vehicle) -> dict:
         return {"armed": vehicle.armed, "error": str(e)}
 
 
-async def do_set_mode(vehicle: Vehicle, mode) -> dict:
+async def do_set_mode(vehicle: Vehicle, mode: str) -> dict:
     try:
-        await vehicle.set_mode(mode)
+        await vehicle.set_mode(mode and mode.upper())
         return {"mode": vehicle.mav_mode}
     except Exception as e:
         return {"mode": vehicle.mav_mode, "error": str(e)}
@@ -98,7 +99,7 @@ class Api:
         await runner.setup()
         await web.TCPSite(runner, host, port).start()
 
-        logging.info(f"HTTP Server started on: {host}:{port}")
+        log.info(f"HTTP Server started on: {host}:{port}")
 
         try:
             await asyncio.Event().wait()
