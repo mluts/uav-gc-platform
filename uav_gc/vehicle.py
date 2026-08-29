@@ -197,9 +197,11 @@ class Vehicle:
     def _on_ekf_status(self, msg, at):
         self.ekf = EKF(flags=msg.flags, at=at)
 
+    @property
     def position_ok(self) -> bool:
         return bool(self.ekf and self.ekf.flags & MAV.EKF_POS_HORIZ_ABS)
 
+    @property
     def armable(self) -> bool:
         return bool(
             self.ekf
