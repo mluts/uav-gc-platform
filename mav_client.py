@@ -9,8 +9,8 @@ import re
 import time
 from enum import Enum, auto
 
-# SITL_SERIAL1 = "tcp:127.0.0.1:5762"
-SITL_SERIAL1 = "udpin:127.0.0.1:14550"
+SITL_SERIAL1 = "tcp:127.0.0.1:5762"
+GCS_DEFAULT_LISTEN = "udpin:127.0.0.1:14550"
 MAV = mavutil.mavlink
 
 
@@ -20,26 +20,6 @@ class AckMissing:
 
     def description(self):
         return self.name
-
-
-@dataclass(frozen=True)
-class CommandAckMsg:
-    msg: Any
-
-    def result(self):
-        if self.msg:
-            return self.msg.result, MAV.enums["MAV_RESULT"][self.msg.result]
-        else:
-            return None, AckMissing("No response for COMMAND_ACK")
-
-    def is_in_progress(self) -> bool:
-        return self.result()[0] == MAV.MAV_RESULT_IN_PROGRESS
-
-    def is_accepted(self) -> bool:
-        return self.result()[0] == MAV.MAV_RESULT_ACCEPTED
-
-    def is_unsuccessful(self) -> bool:
-        return not (self.is_in_progress() or self.is_accepted())
 
 
 class AckStatus(Enum):
@@ -55,14 +35,12 @@ class AckStatus(Enum):
     def return_or_raise(status_tuple, return_status=True):
         (status, details) = status_tuple
 
-        if return_status:
-            return status_tuple
-
-        if status != AckStatus.Accepted:
+        if not return_status and status != AckStatus.Accepted:
             raise RuntimeError(
                 f"Didn't receive command status, reason: {details.result if details else 'Unknown'}"
             )
 
+        return status_tuple
 
 @dataclass(frozen=True)
 class CmdLong:
@@ -119,13 +97,14 @@ class CommandExecutor:
         self.ack_status_details = None
         self.deadline_max = deadline_max
 
-    def send_and_confirm(self) -> tuple[AckStatus, Any]:
+    def send_and_confirm(self, confirmation=0) -> tuple[AckStatus, Any]:
         ack = None
 
-        for confirmation in range(self.retries):
+        for confirmation in range(confirmation, self.retries):
             self.cmd.send(confirmation)
 
             deadline = time.monotonic() + self.ack_timeout
+            deadline_extension = 0
 
             while (left := deadline - time.monotonic()) > 0:
                 ack = self.cmd.recv_ack(left)
@@ -142,11 +121,12 @@ class CommandExecutor:
                     if ack.is_in_progress():
                         self.ack_status = AckStatus.InProgress
 
-                        if deadline >= self.deadline_max:
+                        if deadline_extension >= self.deadline_max:
                             self.ack_status = AckStatus.InProgressTimeout
                             return (self.ack_status, ack)
 
                         deadline += self.ack_timeout
+                        deadline_extension += self.ack_timeout
                         continue
 
         if self.ack_status == AckStatus.InProgress:
@@ -257,7 +237,10 @@ class MAVClient:
         return self.req_msg(MAV.MAVLINK_MSG_ID_SYS_STATUS, return_status=return_status)
 
     def is_arm_ready(self, wait_timeout=60, return_status=True):
-        AckStatus.return_or_raise(self.req_sys_status(return_status=return_status))
+        (status, _) = AckStatus.return_or_raise(self.req_sys_status(return_status=return_status))
+
+        if status != AckStatus.Accepted:
+            return False
 
         msg = self.conn.recv_match(
             type="SYS_STATUS",

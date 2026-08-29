@@ -2,7 +2,8 @@
 
 import sys
 
-import mav_client
+from uav_gc import link, command
+import asyncio
 
 
 class Check:
@@ -27,18 +28,38 @@ class Check:
         self.indent += " " * 2
 
 
-check = Check()
+async def main():
+    check = Check()
 
-client = mav_client.MAVClient.from_args()
+    client = link.MavLink.from_args()
+    client.start()
 
-check.log("checking heartbeat...")
+    check.log("checking heartbeat...")
 
-hb = client.wait_heartbeat()
+    is_up = await client.up()
 
-check.log(f"mavlink_version={client.protocol_version()}")
+    check.step("hearbeat", is_up, f"sysid={client.conn.target_system}")
 
-check.step("hearbeat", hb is not None, f"sysid={client.target_system()}")
+    check.log("checking prearm readiness...")
 
-check.log("checking prearm readiness...")
+    cmd = command.ReqSysStatus(client)
+    cmd.send()
+    msg = await client.wait_for(link.every_pred(link.IsSysStatusMsg, link.SysStatusPrearmReady))
 
-check.step("prearm check", client.is_arm_ready(), f"sysid={client.target_system()}")
+    check.step("prearm check", msg, f"sysid={client.conn.target_system}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+# client = mav_client.MAVClient.from_args()
+# hb = client.wait_heartbeat()
+#
+# check.log(f"mavlink_version={client.protocol_version()}")
+#
+# check.step("hearbeat", hb is not None, f"sysid={client.target_system()}")
+#
+# check.log("checking prearm readiness...")
+#
+# check.step("prearm check", client.is_arm_ready(), f"sysid={client.target_system()}")
